@@ -1,0 +1,168 @@
+services:
+
+  # ================= CONFIG SERVERS =================
+  configsvr1:
+    image: mongo:8.0
+    command: >
+      bash -c "cp /etc/mongo-keyfile /tmp/mongo-keyfile && chmod 600 /tmp/mongo-keyfile && exec mongod --configsvr --replSet cfgRS --keyFile /tmp/mongo-keyfile --auth --bind_ip_all --port 27017 --dbpath /data/configdb"
+    volumes:
+      - ../data/configsvr1:/data/configdb
+      - ./secrets/mongo-keyfile:/etc/mongo-keyfile:ro
+    networks: [mongo-net]
+# depends on!
+  configsvr2:
+    image: mongo:8.0
+    command: >
+      bash -c "cp /etc/mongo-keyfile /tmp/mongo-keyfile && chmod 600 /tmp/mongo-keyfile && exec mongod --configsvr --replSet cfgRS --keyFile /tmp/mongo-keyfile --auth --bind_ip_all --port 27017 --dbpath /data/configdb"
+    volumes:
+      - ../data/configsvr2:/data/configdb
+      - ./secrets/mongo-keyfile:/etc/mongo-keyfile:ro
+    networks: [mongo-net]
+
+  configsvr3:
+    image: mongo:8.0
+    command: >
+      bash -c "cp /etc/mongo-keyfile /tmp/mongo-keyfile && chmod 600 /tmp/mongo-keyfile && exec mongod --configsvr --replSet cfgRS --keyFile /tmp/mongo-keyfile --auth --bind_ip_all --port 27017 --dbpath /data/configdb"
+    volumes:
+      - ../data/configsvr3:/data/configdb
+      - ./secrets/mongo-keyfile:/etc/mongo-keyfile:ro
+    networks: [mongo-net]
+
+  # ================= SHARD 1 =================
+  shard1_primary:
+    image: mongo:8.0
+    command: >
+      bash -c "cp /etc/mongo-keyfile /tmp/mongo-keyfile && chmod 600 /tmp/mongo-keyfile && exec mongod --shardsvr --replSet shard1RS --keyFile /tmp/mongo-keyfile --auth --bind_ip_all --port 27017 --dbpath /data/db"
+    volumes:
+      - ../data/shard1_primary:/data/db
+      - ./secrets/mongo-keyfile:/etc/mongo-keyfile:ro
+    networks: [mongo-net]
+
+  shard1_secondary1:
+    image: mongo:8.0
+    command: >
+      bash -c "cp /etc/mongo-keyfile /tmp/mongo-keyfile && chmod 600 /tmp/mongo-keyfile && exec mongod --shardsvr --replSet shard1RS --keyFile /tmp/mongo-keyfile --auth --bind_ip_all --port 27017 --dbpath /data/db"
+    volumes:
+      - ../data/shard1_secondary1:/data/db
+      - ./secrets/mongo-keyfile:/etc/mongo-keyfile:ro
+    networks: [mongo-net]
+
+  shard1_secondary2:
+    image: mongo:8.0
+    command: >
+      bash -c "cp /etc/mongo-keyfile /tmp/mongo-keyfile && chmod 600 /tmp/mongo-keyfile && exec mongod --shardsvr --replSet shard1RS --keyFile /tmp/mongo-keyfile --auth --bind_ip_all --port 27017 --dbpath /data/db"
+    volumes:
+      - ../data/shard1_secondary2:/data/db
+      - ./secrets/mongo-keyfile:/etc/mongo-keyfile:ro
+    networks: [mongo-net]
+
+  # ================= SHARD 2 =================
+  shard2_primary:
+    image: mongo:8.0
+    command: >
+      bash -c "cp /etc/mongo-keyfile /tmp/mongo-keyfile && chmod 600 /tmp/mongo-keyfile && exec mongod --shardsvr --replSet shard2RS --keyFile /tmp/mongo-keyfile --auth --bind_ip_all --port 27017 --dbpath /data/db"
+    volumes:
+      - ../data/shard2_primary:/data/db
+      - ./secrets/mongo-keyfile:/etc/mongo-keyfile:ro
+    networks: [mongo-net]
+
+  shard2_secondary1:
+    image: mongo:8.0
+    command: >
+      bash -c "cp /etc/mongo-keyfile /tmp/mongo-keyfile && chmod 600 /tmp/mongo-keyfile && exec mongod --shardsvr --replSet shard2RS --keyFile /tmp/mongo-keyfile --auth --bind_ip_all --port 27017 --dbpath /data/db"
+    volumes:
+      - ../data/shard2_secondary1:/data/db
+      - ./secrets/mongo-keyfile:/etc/mongo-keyfile:ro
+    networks: [mongo-net]
+
+  shard2_secondary2:
+    image: mongo:8.0
+    command: >
+      bash -c "cp /etc/mongo-keyfile /tmp/mongo-keyfile && chmod 600 /tmp/mongo-keyfile && exec mongod --shardsvr --replSet shard2RS --keyFile /tmp/mongo-keyfile --auth --bind_ip_all --port 27017 --dbpath /data/db"
+    volumes:
+      - ../data/shard2_secondary2:/data/db
+      - ./secrets/mongo-keyfile:/etc/mongo-keyfile:ro
+    networks: [mongo-net]
+
+  # ================= SHARD 3 =================
+  shard3_primary:
+    image: mongo:8.0
+    command: >
+      bash -c "cp /etc/mongo-keyfile /tmp/mongo-keyfile && chmod 600 /tmp/mongo-keyfile && exec mongod --shardsvr --replSet shard3RS --keyFile /tmp/mongo-keyfile --auth --bind_ip_all --port 27017 --dbpath /data/db"
+    volumes:
+      - ../data/shard3_primary:/data/db
+      - ./secrets/mongo-keyfile:/etc/mongo-keyfile:ro
+    networks: [mongo-net]
+
+  shard3_secondary1:
+    image: mongo:8.0
+    command: >
+      bash -c "cp /etc/mongo-keyfile /tmp/mongo-keyfile && chmod 600 /tmp/mongo-keyfile && exec mongod --shardsvr --replSet shard3RS --keyFile /tmp/mongo-keyfile --auth --bind_ip_all --port 27017 --dbpath /data/db"
+    volumes:
+      - ../data/shard3_secondary1:/data/db
+      - ./secrets/mongo-keyfile:/etc/mongo-keyfile:ro
+    networks: [mongo-net]
+
+  shard3_secondary2:
+    image: mongo:8.0
+    command: >
+      bash -c "cp /etc/mongo-keyfile /tmp/mongo-keyfile && chmod 600 /tmp/mongo-keyfile && exec mongod --shardsvr --replSet shard3RS --keyFile /tmp/mongo-keyfile --auth --bind_ip_all --port 27017 --dbpath /data/db"
+    volumes:
+      - ../data/shard3_secondary2:/data/db
+      - ./secrets/mongo-keyfile:/etc/mongo-keyfile:ro
+    networks: [mongo-net]
+
+  # ================= MONGOS ROUTERS =================
+  mongos1:
+    image: mongo:8.0
+    command: >
+      bash -c "cp /etc/mongo-keyfile /tmp/mongo-keyfile && chmod 600 /tmp/mongo-keyfile && exec mongos --configdb cfgRS/configsvr1:27017,configsvr2:27017,configsvr3:27017 --keyFile /tmp/mongo-keyfile --bind_ip_all --port 27017"
+    ports:
+      - "27017:27017"
+    volumes:
+      - ./secrets/mongo-keyfile:/etc/mongo-keyfile:ro
+    networks: [mongo-net]
+
+  mongos2:
+    image: mongo:8.0
+    command: >
+      bash -c "cp /etc/mongo-keyfile /tmp/mongo-keyfile && chmod 600 /tmp/mongo-keyfile && exec mongos --configdb cfgRS/configsvr1:27017,configsvr2:27017,configsvr3:27017 --keyFile /tmp/mongo-keyfile --bind_ip_all --port 27017"
+    ports:
+      - "27018:27017"
+    volumes:
+      - ./secrets/mongo-keyfile:/etc/mongo-keyfile:ro
+    networks: [mongo-net]
+
+  # ================= CLIENT =================
+  mongo-client:
+    image: mongo:8.0
+    command: ["sleep", "infinity"]
+    depends_on:
+      - mongos1
+      - mongos2
+    networks: [mongo-net]
+
+  # ================= UI =================
+  mongo-express:
+    image: mongo-express:1.0.2
+    ports:
+      - "8082:8081"
+    environment:
+      ME_CONFIG_MONGODB_URL: mongodb://admin:adminpass@mongos1:27017,mongos2:27017/admin?authSource=admin
+    networks: [mongo-net]
+
+  # ================= AUTO SHARD COLLECTIONS =================
+  mongo-shard-collections:
+    image: mongo:8.0
+    depends_on:
+      - mongos1
+      - mongos2
+    volumes:
+      - ./mongo-init:/mongo-init
+    command: >
+      bash -c "until mongosh 'mongodb://admin:adminpass@mongos1:27017,mongos2:27017/admin?authSource=admin' --quiet --eval 'db.adminCommand({ ping: 1 }).ok' | grep -q 1; do echo 'Waiting for mongos...'; sleep 2; done; mongosh 'mongodb://admin:adminpass@mongos1:27017,mongos2:27017/admin?authSource=admin' /mongo-init/02b-shard-collections.js"
+    networks: [mongo-net]
+
+networks:
+  mongo-net:
+    name: funkcni_reseni_mongo-net

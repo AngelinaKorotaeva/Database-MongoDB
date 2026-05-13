@@ -1,0 +1,1523 @@
+1. Agregační a analytické dotazy
+
+1) Míra doporučení podle žánru a typu žebříčku
+db.reviews.aggregate([
+  {
+    $lookup: {
+      from: "ranking",
+      localField: "game_name_norm",
+      foreignField: "game_name_norm",
+      as: "rankInfo"
+    }
+  },
+  { $unwind: "$rankInfo" },
+  {
+    $group: {
+      _id: {
+        genre: "$rankInfo.genre",
+        rank_type: "$rankInfo.rank_type"
+      },
+      totalReviews: { $sum: 1 },
+      recommendedCount: {
+        $sum: {
+          $cond: [{ $eq: ["$recommendation", "recommended"] }, 1, 0]
+        }
+      },
+      avgHours: { $avg: "$hours_played" },
+      avgHelpful: { $avg: "$helpful" }
+    }
+  },
+  {
+    $addFields: {
+      recommendRate: {
+        $round: [
+          { $multiply: [{ $divide: ["$recommendedCount", "$totalReviews"] }, 100] },
+          2
+        ]
+      }
+    }
+  },
+  { $match: { totalReviews: { $gte: 50 } } },
+  { $sort: { recommendRate: -1, avgHours: -1 } }
+])
+
+Zadání: Zjistit, které kombinace žánru a typu žebříčku dosahují nejvyšší míry doporučení od hráčů.
+Popis: Dotaz propojuje kolekci recenzí s kolekcí ranking podle normalizovaného názvu hry. Následně agreguje data podle žánru a typu žebříčku, počítá počet recenzí, počet doporučených recenzí, průměrný počet odehraných hodin a průměrný počet označení „helpful“. Výsledkem je přehled, ve kterých segmentech trhu hráči nejčastěji doporučují hry.
+
+2) Top hry podle složeného skóre kvality
+db.reviews.aggregate([
+  {
+    $group: {
+      _id: "$game_name_norm",
+      game_name: { $first: "$game_name" },
+      totalReviews: { $sum: 1 },
+      recommendedCount: {
+        $sum: {
+          $cond: [{ $eq: ["$recommendation", "recommended"] }, 1, 0]
+        }
+      },
+      avgHours: { $avg: "$hours_played" },
+      avgHelpful: { $avg: "$helpful" },
+      avgFunny: { $avg: "$funny" }
+    }
+  },
+  { $match: { totalReviews: { $gte: 50 } } },
+  {
+    $lookup: {
+      from: "ranking",
+      localField: "_id",
+      foreignField: "game_name_norm",
+      as: "ranking"
+    }
+  },
+  {
+    $addFields: {
+      recommendRate: { $divide: ["$recommendedCount", "$totalReviews"] },
+      rankingBonus: {
+        $avg: {
+          $map: {
+            input: "$ranking",
+            as: "r",
+            in: { $divide: [100, { $add: ["$$r.rank", 1] }] }
+          }
+        }
+      }
+    }
+  },
+  {
+    $addFields: {
+      compositeScore: {
+        $round: [
+          {
+            $add: [
+              { $multiply: ["$recommendRate", 60] },
+              { $multiply: [{ $ifNull: ["$avgHelpful", 0] }, 0.25] },
+              { $multiply: [{ $ifNull: ["$avgHours", 0] }, 0.05] },
+              { $ifNull: ["$rankingBonus", 0] }
+            ]
+          },
+          2
+        ]
+      }
+    }
+  },
+  { $sort: { compositeScore: -1, totalReviews: -1 } },
+  { $limit: 10 },
+  {
+    $project: {
+      _id: 0,
+      game_name: 1,
+      totalReviews: 1,
+      avgHours: { $round: ["$avgHours", 2] },
+      avgHelpful: { $round: ["$avgHelpful", 2] },
+      recommendRate: { $round: [{ $multiply: ["$recommendRate", 100] }, 2] },
+      compositeScore: 1
+    }
+  }
+])
+
+Zadání: Vytvořit pořadí her podle složeného skóre, které kombinuje doporučení, užitečnost recenzí, odehrané hodiny a pozici v žebříčcích.
+Popis: Dotaz nejprve agreguje recenze po hrách a vypočítá základní metriky. Poté pomocí $lookup připojí informace z ranking a dopočítá bonus za umístění v žebříčku. Výsledné složené skóre lépe vystihuje celkovou kvalitu hry než jednoduchý počet recenzí nebo samostatná míra doporučení.
+
+3) Vývoj recenzí v čase po měsících
+db.reviews.aggregate([
+  {$match:{review_year:{$ne:null}, review_month:{$ne:null}}},
+  {$group:{
+    _id:{year:"$review_year", month:"$review_month"},
+    totalReviews:{$sum:1},
+    recommendedCount:{$sum:{$cond:[{$eq:["$recommendation","recommended"]},1,0]}},
+    avgHours:{$avg:"$hours_played"},
+    avgHelpful:{$avg:"$helpful"}
+  }},
+  {$addFields:{
+    recommendRate:{$round:[{$multiply:[{$divide:["$recommendedCount","$totalReviews"]},100]},2]}
+  }},
+  {$sort:{"_id.year":1, "_id.month":1}}
+]);
+
+Dotaz využívá předem připravená pole review_year a review_month a seskupuje recenze podle roku a měsíce. Kromě počtu recenzí počítá také míru doporučení, průměrný počet odehraných hodin a průměrnou užitečnost recenzí. Výstup ukazuje časový trend hráčské aktivity.
+
+4) Rozdělení hráčů podle odehraných hodin a žánru
+db.reviews.aggregate([
+  {
+    $lookup: {
+      from: "ranking",
+      localField: "game_name_norm",
+      foreignField: "game_name_norm",
+      as: "rankInfo"
+    }
+  },
+  { $unwind: "$rankInfo" },
+  {
+    $set: {
+      hoursBucket: {
+        $switch: {
+          branches: [
+            { case: { $lt: ["$hours_played", 5] }, then: "0-5" },
+            { case: { $lt: ["$hours_played", 20] }, then: "5-20" },
+            { case: { $lt: ["$hours_played", 50] }, then: "20-50" },
+            { case: { $lt: ["$hours_played", 100] }, then: "50-100" },
+            { case: { $lt: ["$hours_played", 500] }, then: "100-500" }
+          ],
+          default: "500+"
+        }
+      }
+    }
+  },
+  {
+    $group: {
+      _id: {
+        genre: "$rankInfo.genre",
+        hoursBucket: "$hoursBucket"
+      },
+      totalReviews: { $sum: 1 },
+      recommendedCount: {
+        $sum: {
+          $cond: [{ $eq: ["$recommendation", "recommended"] }, 1, 0]
+        }
+      }
+    }
+  },
+  {
+    $addFields: {
+      recommendRate: {
+        $round: [
+          { $multiply: [{ $divide: ["$recommendedCount", "$totalReviews"] }, 100] },
+          2
+        ]
+      }
+    }
+  },
+  { $sort: { "_id.genre": 1, "_id.hoursBucket": 1 } }
+])
+
+
+db.reviews.aggregate([
+  {
+    $lookup: {
+      from: "ranking",
+      localField: "game_name_norm",
+      foreignField: "game_name_norm",
+      as: "rankInfo"
+    }
+  },
+  { $unwind: "$rankInfo" } ])
+
+Zadání: Zjistit, jak se v jednotlivých žánrech liší chování hráčů podle délky hraní.
+Popis: Dotaz zařazuje recenze do intervalů podle počtu odehraných hodin a poté je propojuje se žánrovými informacemi z ranking. Výsledkem je přehled, zda jsou některé žánry typické spíše krátkými nebo dlouhými herními relacemi a jaká je v těchto skupinách míra doporučení.
+
+5) Nejlépe hodnocení vývojáři podle recenzí hráčů
+db.reviews.aggregate([
+  {
+    $lookup: {
+      from: "games",
+      localField: "game_name_norm",
+      foreignField: "game_name_norm",
+      as: "game"
+    }
+  },
+  { $unwind: "$game" },
+  {
+    $group: {
+      _id: "$game.developer",
+      totalReviews: { $sum: 1 },
+      recommendedCount: {
+        $sum: {
+          $cond: [{ $eq: ["$recommendation", "recommended"] }, 1, 0]
+        }
+      },
+      avgHours: { $avg: "$hours_played" },
+      avgHelpful: { $avg: "$helpful" },
+      distinctGames: { $addToSet: "$game_name_norm" }
+    }
+  },
+  {
+    $addFields: {
+      gamesCount: { $size: "$distinctGames" },
+      recommendRate: {
+        $round: [
+          { $multiply: [{ $divide: ["$recommendedCount", "$totalReviews"] }, 100] },
+          2
+        ]
+      }
+    }
+  },
+  { $match: { gamesCount: { $gte: 2 }, totalReviews: { $gte: 100 } } },
+  { $sort: { recommendRate: -1, avgHelpful: -1 } }
+])
+
+Zadání: Porovnat vývojáře podle celkového přijetí jejich her hráči.
+Popis: Dotaz spojuje recenze s metadaty o hrách a seskupuje výsledky podle vývojáře. Sleduje nejen míru doporučení, ale i počet různých her, průměrnou užitečnost recenzí a průměrný počet odehraných hodin. Výsledkem je žebříček vývojářů s nejlépe přijímaným portfoliem.
+
+6) Vydavatelé s nejsilnějším portfoliem
+db.ranking.aggregate([
+  {
+    $group: {
+      _id: "$game_name_norm",
+      bestRank: { $min: "$rank" },
+      rankTypes: { $addToSet: "$rank_type" }
+    }
+  },
+  {
+    $lookup: {
+      from: "games",
+      localField: "_id",
+      foreignField: "game_name_norm",
+      as: "game"
+    }
+  },
+  { $unwind: "$game" },
+  {
+    $lookup: {
+      from: "reviews",
+      localField: "_id",
+      foreignField: "game_name_norm",
+      as: "reviews"
+    }
+  },
+  {
+    $addFields: {
+      reviewCount: { $size: "$reviews" },
+      recommendedCount: {
+        $size: {
+          $filter: {
+            input: "$reviews",
+            as: "r",
+            cond: { $eq: ["$$r.recommendation", "recommended"] }
+          }
+        }
+      }
+    }
+  },
+  {
+    $addFields: {
+      recommendRate: {
+        $cond: [
+          { $gt: ["$reviewCount", 0] },
+          { $round: [{ $multiply: [{ $divide: ["$recommendedCount", "$reviewCount"] }, 100] }, 2] },
+          0
+        ]
+      }
+    }
+  },
+  {
+    $group: {
+      _id: "$game.publisher",
+      gamesCount: { $sum: 1 },
+      avgBestRank: { $avg: "$bestRank" },
+      avgRecommendRate: { $avg: "$recommendRate" },
+      totalReviewCount: { $sum: "$reviewCount" }
+    }
+  },
+  { $match: { gamesCount: { $gte: 2 } } },
+  { $sort: { avgRecommendRate: -1, avgBestRank: 1 } }
+])
+
+Zadání: Vyhodnotit, kteří vydavatelé mají nejúspěšnější portfolio her z pohledu žebříčků i hráčských recenzí.
+Popis: Dotaz nejprve určuje nejlepší pozici každé hry v žebříčcích, následně připojuje vydavatele a recenze. Poté agreguje výsledky po vydavatelích a hodnotí je podle průměrné nejlepší pozice a průměrné míry doporučení. Tím ukazuje celkovou sílu vydavatelského portfolia.
+
+2. Propojování dat a vazeb mezi datasety
+
+7) Hry, které jsou současně v top 10 podle sales i revenue, ale hráči je hodnotí slabě
+db.ranking.aggregate([
+  {
+    $match: {
+      rank_type: { $in: ["sales", "revenue"] },
+      rank: { $lte: 10 }
+    }
+  },
+  {
+    $group: {
+      _id: "$game_name_norm",
+      game_name: { $first: "$game_name" },
+      topTypes: { $addToSet: "$rank_type" },
+      avgTopRank: { $avg: "$rank" },
+      bestRank: { $min: "$rank" }
+    }
+  },
+  {
+    $match: {
+      $expr: { $eq: [{ $size: "$topTypes" }, 2] }
+    }
+  },
+  {
+    $lookup: {
+      from: "reviews",
+      localField: "_id",
+      foreignField: "game_name_norm",
+      as: "reviews"
+    }
+  },
+  {
+    $addFields: {
+      reviewCount: { $size: "$reviews" },
+      recommendedCount: {
+        $size: {
+          $filter: {
+            input: "$reviews",
+            as: "r",
+            cond: { $eq: ["$$r.recommendation", "recommended"] }
+          }
+        }
+      },
+      avgHelpful: { $avg: "$reviews.helpful" }
+    }
+  },
+  { $match: { reviewCount: { $gte: 20 } } },
+  {
+    $addFields: {
+      recommendRate: {
+        $round: [
+          {
+            $multiply: [
+              { $divide: ["$recommendedCount", "$reviewCount"] },
+              100
+            ]
+          },
+          2
+        ]
+      }
+    }
+  },
+  { $sort: { recommendRate: 1, avgTopRank: 1, avgHelpful: -1 } }
+])
+
+Zadání: Najít hry, které se současně umisťují v top 10 podle sales i revenue, ale přesto dosahují podprůměrné míry doporučení.
+Popis: Dotaz nejprve omezuje ranking pouze na dvě obchodně důležité metriky – sales a revenue – a dále jen na nejvyšší pozice. Následně seskupuje záznamy po hrách, ponechá pouze hry, které se vyskytují v obou typech žebříčků, a pomocí $lookup připojí recenze. Poté vypočítá počet recenzí, počet doporučení, míru doporučení a průměrnou užitečnost recenzí. Výsledkem jsou komerčně silné hry, které však nemusí být stejně pozitivně přijímány hráči.
+
+8) Hry zařazené do více žánrů
+db.ranking.aggregate([
+  {
+    $group: {
+      _id: "$game_name_norm",
+      game_name: { $first: "$game_name" },
+      genres: { $addToSet: "$genre" },
+      rankTypes: { $addToSet: "$rank_type" },
+      bestRank: { $min: "$rank" }
+    }
+  },
+  {
+    $addFields: {
+      genreCount: { $size: "$genres" },
+      rankTypeCount: { $size: "$rankTypes" }
+    }
+  },
+  { $match: { genreCount: { $gte: 2 } } },
+  {
+    $lookup: {
+      from: "reviews",
+      localField: "_id",
+      foreignField: "game_name_norm",
+      as: "reviews"
+    }
+  },
+  {
+    $addFields: {
+      reviewCount: { $size: "$reviews" },
+      recommendRate: {
+        $round: [
+          {
+            $multiply: [
+              {
+                $divide: [
+                  {
+                    $size: {
+                      $filter: {
+                        input: "$reviews",
+                        as: "r",
+                        cond: { $eq: ["$$r.recommendation", "recommended"] }
+                      }
+                    }
+                  },
+                  { $max: [{ $size: "$reviews" }, 1] }
+                ]
+              },
+              100
+            ]
+          },
+          2
+        ]
+      }
+    }
+  },
+  { $sort: { genreCount: -1, recommendRate: -1, bestRank: 1 } }
+])
+
+Zadání: Zjistit, které hry se objevují ve více žánrových kategoriích a jaké mají hráčské přijetí.
+Popis: Dotaz agreguje záznamy z ranking podle hry, zjišťuje počet různých žánrů a typů žebříčků, ve kterých se hra objevuje, a následně připojuje recenze. U takových her lze sledovat, zda širší žánrový přesah souvisí i s pozitivní odezvou hráčů.
+
+9) Hry přítomné ve všech třech typech žebříčků a jejich souhrnný profil
+db.ranking.aggregate([
+  {
+    $group: {
+      _id: "$game_name_norm",
+      game_name: { $first: "$game_name" },
+      rankTypes: { $addToSet: "$rank_type" },
+      genres: { $addToSet: "$genre" },
+      avgRank: { $avg: "$rank" },
+      bestRank: { $min: "$rank" }
+    }
+  },
+  {
+    $match: {
+      $expr: { $eq: [{ $size: "$rankTypes" }, 3] }
+    }
+  },
+  {
+    $lookup: {
+      from: "games",
+      localField: "_id",
+      foreignField: "game_name_norm",
+      as: "game"
+    }
+  },
+  { $unwind: "$game" },
+  {
+    $lookup: {
+      from: "reviews",
+      localField: "_id",
+      foreignField: "game_name_norm",
+      as: "reviews"
+    }
+  },
+  {
+    $addFields: {
+      reviewCount: { $size: "$reviews" },
+      recommendedCount: {
+        $size: {
+          $filter: {
+            input: "$reviews",
+            as: "r",
+            cond: { $eq: ["$$r.recommendation", "recommended"] }
+          }
+        }
+      },
+      avgHelpful: { $avg: "$reviews.helpful" }
+    }
+  },
+  {
+    $addFields: {
+      recommendRate: {
+        $round: [
+          {
+            $multiply: [
+              {
+                $divide: [
+                  "$recommendedCount",
+                  { $max: ["$reviewCount", 1] }
+                ]
+              },
+              100
+            ]
+          },
+          2
+        ]
+      }
+    }
+  },
+  {
+    $project: {
+      _id: 0,
+      game_name: 1,
+      genres: 1,
+      avgRank: { $round: ["$avgRank", 2] },
+      bestRank: 1,
+      developer: "$game.developer",
+      publisher: "$game.publisher",
+      reviewCount: 1,
+      recommendRate: 1,
+      avgHelpful: { $round: ["$avgHelpful", 2] }
+    }
+  },
+  { $sort: { avgRank: 1, recommendRate: -1, avgHelpful: -1 } }
+])
+
+Zadání: Identifikovat hry, které se objevují ve všech třech typech žebříčků (sales, revenue, reviews), a vytvořit jejich souhrnný profil.
+Popis: Dotaz agreguje ranking po jednotlivých hrách a vybírá pouze ty tituly, které mají zastoupení ve všech třech typech žebříčků. Poté připojuje metadata z kolekce games a uživatelské recenze z kolekce reviews. Výsledkem je ucelený profil her, které mají současně obchodní význam, vysokou viditelnost a dostatečné množství hráčské odezvy.
+
+10) Rozdíl mezi metadaty hry a skutečně importovanými recenzemi
+db.games.aggregate([
+  {
+    $lookup: {
+      from: "reviews",
+      localField: "game_name_norm",
+      foreignField: "game_name_norm",
+      as: "reviews"
+    }
+  },
+  {
+    $lookup: {
+      from: "ranking",
+      localField: "game_name_norm",
+      foreignField: "game_name_norm",
+      as: "ranking"
+    }
+  },
+  {
+    $addFields: {
+      importedReviewCount: { $size: "$reviews" },
+      rankingEntries: { $size: "$ranking" },
+      englishReviewDelta: {
+        $subtract: ["$number_of_english_reviews", { $size: "$reviews" }]
+      }
+    }
+  },
+  {
+    $project: {
+      _id: 0,
+      game_name: 1,
+      number_of_english_reviews: 1,
+      importedReviewCount: 1,
+      rankingEntries: 1,
+      englishReviewDelta: 1
+    }
+  },
+  {
+    $sort: {
+      englishReviewDelta: -1
+    }
+  }
+])
+
+Zadání: Porovnat deklarovaný počet anglických recenzí v metadatech s počtem skutečně importovaných recenzí.
+Popis: Dotaz propojuje kolekci games s recenzemi a ranking, poté počítá rozdíl mezi metadaty a skutečně uloženými dokumenty v kolekci reviews. Výsledek pomáhá vysvětlit, proč se pracovní dataset liší od plného zdroje dat.
+
+11) Lídři žánrů s ohledem na užitečnost recenzí
+db.ranking.aggregate([
+  { $match: { rank: { $lte: 5 } } },
+  {
+    $lookup: {
+      from: "reviews",
+      localField: "game_name_norm",
+      foreignField: "game_name_norm",
+      as: "reviews"
+    }
+  },
+  {
+    $lookup: {
+      from: "games",
+      localField: "game_name_norm",
+      foreignField: "game_name_norm",
+      as: "game"
+    }
+  },
+  { $unwind: { path: "$game", preserveNullAndEmptyArrays: true } },
+  {
+    $addFields: {
+      reviewCount: { $size: "$reviews" },
+      avgHelpful: { $avg: "$reviews.helpful" },
+      recommendRate: {
+        $round: [
+          {
+            $multiply: [
+              {
+                $divide: [
+                  {
+                    $size: {
+                      $filter: {
+                        input: "$reviews",
+                        as: "r",
+                        cond: { $eq: ["$$r.recommendation", "recommended"] }
+                      }
+                    }
+                  },
+                  { $max: [{ $size: "$reviews" }, 1] }
+                ]
+              },
+              100
+            ]
+          },
+          2
+        ]
+      }
+    }
+  },
+  {
+    $project: {
+      _id: 0,
+      game_name: 1,
+      genre: 1,
+      rank_type: 1,
+      rank: 1,
+      developer: "$game.developer",
+      publisher: "$game.publisher",
+      reviewCount: 1,
+      avgHelpful: { $round: ["$avgHelpful", 2] },
+      recommendRate: 1
+    }
+  },
+  { $sort: { genre: 1, rank_type: 1, rank: 1 } }
+])
+
+Zadání: Porovnat nejvýše umístěné hry v žebříčcích s jejich skutečnou užitečností recenzí a mírou doporučení.
+Popis: Dotaz vybírá pouze hry v top 5 a následně je obohacuje o recenze a metadata o vývojáři a vydavateli. Díky tomu lze porovnat, zda je vysoké umístění v žebříčku podpořeno i kvalitní a užitečnou hráčskou odezvou.
+
+12) Vztah mezi vývojářem a vydavatelem
+db.games.aggregate([
+  {
+    $addFields: {
+      sameCompany: { $eq: ["$developer", "$publisher"] }
+    }
+  },
+  {
+    $lookup: {
+      from: "reviews",
+      localField: "game_name_norm",
+      foreignField: "game_name_norm",
+      as: "reviews"
+    }
+  },
+  {
+    $group: {
+      _id: "$sameCompany",
+      gamesCount: { $sum: 1 },
+      totalReviews: { $sum: { $size: "$reviews" } },
+      avgReviewsPerGame: { $avg: { $size: "$reviews" } },
+      recommendRate: {
+        $avg: {
+          $cond: [
+            { $gt: [{ $size: "$reviews" }, 0] },
+            {
+              $multiply: [
+                {
+                  $divide: [
+                    {
+                      $size: {
+                        $filter: {
+                          input: "$reviews",
+                          as: "r",
+                          cond: { $eq: ["$$r.recommendation", "recommended"] }
+                        }
+                      }
+                    },
+                    { $size: "$reviews" }
+                  ]
+                },
+                100
+              ]
+            },
+            0
+          ]
+        }
+      }
+    }
+  },
+  { $sort: { recommendRate: -1 } }
+])
+
+Zadání: Ověřit, zda mají lepší výsledky hry, u nichž je vývojář a vydavatel stejná společnost.
+Popis: Dotaz vytváří kategorii podle toho, zda je developer totožný s publisherem, a následně propojuje data s recenzemi. Výstup ukazuje, zda tento organizační model souvisí s vyšším počtem recenzí nebo vyšší mírou doporučení.
+
+3. Transformace a obohacení dat
+
+13) Segmentace hráčů podle počtu odehraných hodin
+db.reviews.aggregate([
+  {
+    $set: {
+      playerSegment: {
+        $switch: {
+          branches: [
+            { case: { $lt: ["$hours_played", 5] }, then: "newcomer" },
+            { case: { $lt: ["$hours_played", 30] }, then: "casual" },
+            { case: { $lt: ["$hours_played", 100] }, then: "engaged" },
+	    { case: { $lt: ["$hours_played", 500] }, then: "hardcore" }
+          ],
+          default: "mene nez 5 hodin"
+        }
+      }
+    }
+  },
+  {
+    $group: {
+      _id: "$playerSegment",
+      totalReviews: { $sum: 1 },
+      avgHelpful: { $avg: "$helpful" },
+      avgFunny: { $avg: "$funny" },
+      recommendedCount: {
+        $sum: {
+          $cond: [{ $eq: ["$recommendation", "recommended"] }, 1, 0]
+        }
+      }
+    }
+  },
+  {
+    $addFields: {
+      recommendRate: {
+        $round: [
+          { $multiply: [{ $divide: ["$recommendedCount", "$totalReviews"] }, 100] },
+          2
+        ]
+      }
+    }
+  },
+  { $sort: { totalReviews: -1 } }
+])
+
+Zadání: Rozdělit hráče do segmentů podle herní aktivity a porovnat jejich chování.
+Popis: Dotaz využívá $switch pro vytvoření odvozené kategorie hráče podle počtu odehraných hodin. Následná agregace ukazuje, jak se jednotlivé segmenty liší v míře doporučení, užitečnosti a humornosti recenzí.
+
+14) Délka recenze a reakce komunity
+db.reviews.aggregate([
+  {
+    $set: {
+      reviewLength: { $strLenCP: "$review" }
+    }
+  },
+  {
+    $set: {
+      lengthBucket: {
+        $switch: {
+          branches: [
+            { case: { $lt: ["$reviewLength", 100] }, then: "short" },
+            { case: { $lt: ["$reviewLength", 300] }, then: "medium" },
+            { case: { $lt: ["$reviewLength", 700] }, then: "long" }
+          ],
+          default: "very_long"
+        }
+      }
+    }
+  },
+  {
+    $group: {
+      _id: "$lengthBucket",
+      totalReviews: { $sum: 1 },
+      avgHelpful: { $avg: "$helpful" },
+      avgFunny: { $avg: "$funny" },
+      avgHours: { $avg: "$hours_played" },
+      recommendedCount: {
+        $sum: {
+          $cond: [{ $eq: ["$recommendation", "recommended"] }, 1, 0]
+        }
+      }
+    }
+  },
+  {
+    $addFields: {
+      recommendRate: {
+        $round: [
+          { $multiply: [{ $divide: ["$recommendedCount", "$totalReviews"] }, 100] },
+          2
+        ]
+      }
+    }
+  },
+  { $sort: { avgHelpful: -1 } }
+])
+
+Zadání: Zjistit, zda délka recenze souvisí s její užitečností a s mírou doporučení.
+Popis: Dotaz nejprve vypočítá délku textu recenze a zařadí recenze do intervalů podle délky. Poté porovnává tyto skupiny z hlediska užitečnosti, humornosti, odehraných hodin a doporučení. Výsledek pomáhá interpretovat, zda delší recenze bývají v komunitě ceněnější.
+
+15) Úspěšnost her podle desetiletí vydání
+db.games.aggregate([
+  {
+    $set: {
+      yearMatch: {
+        $regexFind: {
+          input: "$release_date",
+          regex: /\d{4}/
+        }
+      }
+    }
+  },
+  {
+    $set: {
+      releaseYear: {
+        $cond: [
+          { $ne: ["$yearMatch", null] },
+          { $toInt: "$yearMatch.match" },
+          null
+        ]
+      }
+    }
+  },
+  { $match: { releaseYear: { $ne: null } } },
+  {
+    $set: {
+      releaseDecade: {
+        $concat: [
+          { $toString: { $multiply: [{ $floor: { $divide: ["$releaseYear", 10] } }, 10] } },
+          "s"
+        ]
+      }
+    }
+  },
+  {
+    $lookup: {
+      from: "reviews",
+      localField: "game_name_norm",
+      foreignField: "game_name_norm",
+      as: "reviews"
+    }
+  },
+  {
+    $group: {
+      _id: "$releaseDecade",
+      gamesCount: { $sum: 1 },
+      avgImportedReviews: { $avg: { $size: "$reviews" } },
+      avgEnglishReviewsMeta: { $avg: "$number_of_english_reviews" }
+    }
+  },
+  { $sort: { _id: 1 } }
+])
+
+Zadání: Porovnat úspěšnost her podle desetiletí jejich vydání.
+Popis: Dotaz extrahuje rok vydání z textového pole, převádí jej na číselnou hodnotu a následně vytváří desetiletí jako novou kategorii. Poté sleduje, kolik her spadá do každého desetiletí a jaký je jejich průměrný počet recenzí.
+
+16) Tematické prvky v popisech her a jejich vliv na recenze
+db.games.aggregate([
+  {
+    $set: {
+      descText: {
+        $toLower: {
+          $concat: ["$short_description", " ", "$long_description"]
+        }
+      }
+    }
+  },
+  {
+    $set: {
+      tags: {
+        $filter: {
+          input: [
+            {
+              $cond: [
+                { $regexMatch: { input: "$descText", regex: /multiplayer|coop|co-op|online/ } },
+                "multiplayer",
+                null
+              ]
+            },
+            {
+              $cond: [
+                { $regexMatch: { input: "$descText", regex: /story|narrative|character|quest/ } },
+                "story",
+                null
+              ]
+            },
+            {
+              $cond: [
+                { $regexMatch: { input: "$descText", regex: /strategy|tactic|management/ } },
+                "strategy",
+                null
+              ]
+            },
+            {
+              $cond: [
+                { $regexMatch: { input: "$descText", regex: /simulation|simulator/ } },
+                "simulation",
+                null
+              ]
+            }
+          ],
+          as: "t",
+          cond: { $ne: ["$$t", null] }
+        }
+      }
+    }
+  },
+  { $unwind: "$tags" },
+  {
+    $lookup: {
+      from: "reviews",
+      localField: "game_name_norm",
+      foreignField: "game_name_norm",
+      as: "reviews"
+    }
+  },
+  {
+    $group: {
+      _id: "$tags",
+      gamesCount: { $sum: 1 },
+      avgReviewsPerGame: { $avg: { $size: "$reviews" } },
+      avgHelpful: { $avg: { $avg: "$reviews.helpful" } }
+    }
+  },
+  { $sort: { avgReviewsPerGame: -1 } }
+])
+
+Zadání: Ověřit, zda určité tematické prvky v popisech her souvisejí s vyšším zájmem hráčů.
+Popis: Dotaz vytváří z textových popisů jednoduché tematické štítky na základě klíčových slov. Následně sleduje, kolik recenzí mají hry s daným tématem a jak užitečné jsou jejich recenze. Jde o příklad obohacení dat přímo v rámci agregace.
+
+17) Převod žebříčku do širokého formátu
+db.ranking.aggregate([
+  {$group:{
+    _id:"$game_name_norm",
+    game_name:{$first:"$game_name"},
+    salesRank:{$min:{$cond:[{$eq:["$rank_type","sales"]},"$rank",999999]}},
+    revenueRank:{$min:{$cond:[{$eq:["$rank_type","revenue"]},"$rank",999999]}},
+    reviewsRank:{$min:{$cond:[{$eq:["$rank_type","reviews"]},"$rank",999999]}},
+    genres:{$addToSet:"$genre"}
+  }},
+  {$set:{
+    salesRank:{$cond:[{$eq:["$salesRank",999999]},null,"$salesRank"]},
+    revenueRank:{$cond:[{$eq:["$revenueRank",999999]},null,"$revenueRank"]},
+    reviewsRank:{$cond:[{$eq:["$reviewsRank",999999]},null,"$reviewsRank"]}
+  }},
+  {$lookup:{from:"reviews", localField:"_id", foreignField:"game_name_norm", as:"reviews"}},
+  {$project:{
+    _id:0,
+    game_name:1,
+    genres:1,
+    salesRank:1,
+    revenueRank:1,
+    reviewsRank:1,
+    importedReviewCount:{$size:"$reviews"}
+  }},
+  {$sort:{salesRank:1, revenueRank:1, reviewsRank:1}}
+]);
+
+Zadání: Převést řádkový ranking do přehledné tabulkové podoby po jednotlivých hrách.
+Popis: Dotaz transformuje více řádků rankingu jedné hry do jednoho dokumentu, který obsahuje samostatná pole pro salesRank, revenueRank a reviewsRank. Tím vzniká přehlednější analytická reprezentace vhodná pro další zpracování.
+
+18) Ověření využití složeného indexu pomocí explain
+
+Vytvoření indexa:
+
+db.reviews.createIndex({ recommendation: 1, game_name_norm: 1, helpful: -1 })
+
+Dotáz:
+
+db.reviews.explain("executionStats").aggregate([
+  { $match: { recommendation: "recommended" } },
+  { $sort: { game_name_norm: 1, helpful: -1 } },
+  {
+    $group: {
+      _id: "$game_name_norm",
+      topHelpfulReview: { $first: "$helpful" },
+      avgHours: { $avg: "$hours_played" },
+      reviewCount: { $sum: 1 }
+    }
+  },
+  { $match: { reviewCount: { $gte: 20 } } },
+  { $sort: { topHelpfulReview: -1, reviewCount: -1 } },
+  { $limit: 10 }
+])
+
+Zadání:
+Ověřit, zda MongoDB při analytickém dotazu využívá vytvořený složený index.
+
+Popis:
+Dotaz používá explain("executionStats") pro zobrazení plánu vykonání agregační pipeline. Cílem je ověřit, zda databáze skutečně používá vytvořený index při filtrování, řazení a agregaci recenzí. Výsledek slouží k demonstraci optimalizace dotazů a práce s indexy v MongoDB.
+
+4. Validace a kvalita dat
+
+19) Podezřele duplicitní recenze
+db.reviews.aggregate([
+  {
+    $project: {
+      username: 1,
+      game_name: 1,
+      game_name_norm: 1,
+      normalizedReview: {
+        $toLower: {
+          $trim: {
+            input: {
+              $replaceAll: {
+                input: "$review",
+                find: "\n",
+                replacement: " "
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    $group: {
+      _id: {
+        username: "$username",
+        game_name_norm: "$game_name_norm",
+        normalizedReview: "$normalizedReview"
+      },
+      count: { $sum: 1 },
+      game_name: { $first: "$game_name" }
+    }
+  },
+  { $match: { count: { $gt: 1 } } },
+  { $sort: { count: -1 } }
+])
+
+Zadání: Najít uživatele, kteří vložili stejnou nebo téměř stejnou recenzi vícekrát ke stejné hře.
+Popis: Dotaz normalizuje text recenze a seskupuje záznamy podle uživatele, hry a textu recenze. Výstup ukazuje potenciální duplicity, které mohou být důsledkem nekvalitních dat nebo opakovaného importu.
+
+20) Hry s nejvíce chybějícími metadaty
+db.games.aggregate([
+  {
+    $project: {
+      game_name: 1,
+      missingCount: {
+        $add: [
+          { $cond: [{ $eq: ["$short_description", "Unknown"] }, 1, 0] },
+          { $cond: [{ $eq: ["$long_description", "Unknown"] }, 1, 0] },
+          { $cond: [{ $eq: ["$genres", "Unknown"] }, 1, 0] },
+          { $cond: [{ $eq: ["$developer", "Unknown"] }, 1, 0] },
+          { $cond: [{ $eq: ["$publisher", "Unknown"] }, 1, 0] },
+          { $cond: [{ $eq: ["$overall_player_rating", "Unknown"] }, 1, 0] },
+          { $cond: [{ $eq: ["$minimum_system_requirement", "Unknown"] }, 1, 0] },
+          { $cond: [{ $eq: ["$recommend_system_requirement", "Unknown"] }, 1, 0] }
+        ]
+      }
+    }
+  },
+  {
+    $lookup: {
+      from: "reviews",
+      localField: "game_name",
+      foreignField: "game_name",
+      as: "reviews"
+    }
+  },
+  {
+    $project: {
+      game_name: 1,
+      missingCount: 1,
+      reviewCount: { $size: "$reviews" }
+    }
+  },
+  { $sort: { missingCount: -1, reviewCount: -1 } }
+])
+
+Zadání: Zjistit, které hry mají nejméně kvalitně vyplněná metadata.
+Popis: Dotaz pro každou hru počítá počet polí s hodnotou Unknown a zároveň připojuje počet recenzí. Tím lze odlišit hry, které jsou důležité z hlediska analýzy, ale trpí slabou kvalitou metadat.
+
+21) Podezřelé recenze s minimálním časem hraní
+db.reviews.aggregate([
+  {
+    $set: {
+      suspicious: {
+        $cond: [
+          {
+            $or: [
+              {
+                $and: [
+                  { $lt: ["$hours_played", 1] },
+                  { $gte: ["$helpful", 20] }
+                ]
+              },
+              {
+                $and: [
+                  { $lt: ["$hours_played", 1] },
+                  { $gte: ["$funny", 10] }
+                ]
+              }
+            ]
+          },
+          1,
+          0
+        ]
+      }
+    }
+  },
+  { $match: { suspicious: 1 } },
+  {
+    $group: {
+      _id: "$game_name_norm",
+      game_name: { $first: "$game_name" },
+      suspiciousReviews: { $sum: 1 },
+      avgHelpful: { $avg: "$helpful" },
+      avgFunny: { $avg: "$funny" }
+    }
+  },
+  { $sort: { suspiciousReviews: -1 } }
+])
+
+Zadání: Najít recenze, které mohou být z pohledu datové kvality problematické.
+Popis: Dotaz označuje jako podezřelé takové recenze, kde hráč téměř nehrál, ale recenze získala výrazně vysokou pozornost. Tento přístup může pomoci při detekci anomálií nebo podezřelého uživatelského chování.
+
+22) Rozdíl mezi zakoupenými recenzemi a importem
+db.games.aggregate([
+  {
+    $lookup: {
+      from: "reviews",
+      localField: "game_name_norm",
+      foreignField: "game_name_norm",
+      as: "reviews"
+    }
+  },
+  {
+    $addFields: {
+      importedReviewCount: { $size: "$reviews" },
+      purchasedDelta: {
+        $subtract: [
+          "$number_of_reviews_from_purchased_people",
+          { $size: "$reviews" }
+        ]
+      }
+    }
+  },
+  {
+    $project: {
+      _id: 0,
+      game_name: 1,
+      number_of_reviews_from_purchased_people: 1,
+      importedReviewCount: 1,
+      purchasedDelta: 1
+    }
+  },
+  { $sort: { purchasedDelta: -1 } }
+])
+
+Zadání: Porovnat deklarovaný počet recenzí od nakupujících s počtem recenzí skutečně importovaných do databáze.
+Popis: Dotaz kontroluje konzistenci mezi metadaty hry a reálným obsahem kolekce reviews. Rozdíly mohou být vysvětleny tím, že byl použit pouze vzorek dat nebo že byly recenze při čištění omezeny na menší rozsah.
+
+23) Statistika využití indexů v kolekci reviews
+db.reviews.aggregate([
+  { $indexStats: {} },
+  {
+    $project: {
+      _id: 0,
+      name: 1,
+      key: 1,
+      accesses: "$accesses.ops",
+      since: "$accesses.since",
+      host: 1
+    }
+  },
+  { $sort: { accesses: -1, name: 1 } }
+])
+
+Zadání: Zjistit, které indexy v kolekci reviews jsou skutečně používány a s jakou četností.
+Popis: Dotaz využívá agregační fázi $indexStats, která vrací statistiky o využívání indexů. Následně projektuje pouze relevantní informace, jako je název indexu, definice klíče, počet přístupů a čas počátku měření. Výsledky lze využít pro posouzení, zda vytvořené indexy skutečně pomáhají dotazům, nebo zda jsou některé indexy nadbytečné.
+
+24) Distribuce chunků kolekce reviews mezi shardy
+
+const ns = "steam_bd.reviews";
+
+const collMeta = db.getSiblingDB("config").collections.findOne({_id: ns});
+
+db.adminCommand({listShards: 1});
+
+db.getSiblingDB("config").chunks.aggregate([
+  {$match:{uuid: collMeta.uuid}},
+  {$group:{
+    _id:"$shard",
+    chunkCount:{$sum:1}
+  }},
+  {$sort:{chunkCount:-1}}
+]);
+
+Dotaz pracuje s konfigurační databází clusteru a zjišťuje počet chunků kolekce reviews uložených na jednotlivých shardech. Výsledkem je přehled distribuce dat v rámci sharded clusteru.
+
+5. Pokročilé textové a behaviorální analýzy
+
+25) Hry s častými zmínkami o technických problémech
+db.reviews.aggregate([
+  {
+    $match: {
+      $text: {
+        $search: "crash bug performance optimization lag stutter"
+      }
+    }
+  },
+  {
+    $addFields: {
+      textScore: { $meta: "textScore" }
+    }
+  },
+  {
+    $group: {
+      _id: "$game_name_norm",
+      game_name: { $first: "$game_name" },
+      mentionCount: { $sum: 1 },
+      avgTextScore: { $avg: "$textScore" },
+      avgHelpful: { $avg: "$helpful" },
+      recommendedCount: {
+        $sum: {
+          $cond: [{ $eq: ["$recommendation", "recommended"] }, 1, 0]
+        }
+      }
+    }
+  },
+  {
+    $addFields: {
+      recommendRate: {
+        $round: [
+          { $multiply: [{ $divide: ["$recommendedCount", "$mentionCount"] }, 100] },
+          2
+        ]
+      }
+    }
+  },
+  { $sort: { mentionCount: -1, avgTextScore: -1 } },
+  { $limit: 10 }
+])
+
+Zadání: Najít hry, u nichž se v recenzích nejčastěji objevují zmínky o technických problémech.
+Popis: Dotaz využívá fulltextové vyhledávání nad recenzemi a následně agreguje výsledky po hrách. Sleduje nejen četnost zmínek, ale i jejich textové skóre, užitečnost recenzí a míru doporučení. Hodí se pro analýzu stability a kvality technického zpracování hry.
+
+26) Tematická klasifikace recenzí
+db.reviews.aggregate([
+  {
+    $set: {
+      review_lc: { $toLower: "$review" }
+    }
+  },
+  {
+    $set: {
+      themes: {
+        $filter: {
+          input: [
+            {
+              $cond: [
+                { $regexMatch: { input: "$review_lc", regex: /story|narrative|quest|character/ } },
+                "story",
+                null
+              ]
+            },
+            {
+              $cond: [
+                { $regexMatch: { input: "$review_lc", regex: /performance|lag|fps|crash|bug|stutter/ } },
+                "technical",
+                null
+              ]
+            },
+            {
+              $cond: [
+                { $regexMatch: { input: "$review_lc", regex: /multiplayer|online|coop|co-op|server/ } },
+                "multiplayer",
+                null
+              ]
+            },
+            {
+              $cond: [
+                { $regexMatch: { input: "$review_lc", regex: /graphics|visual|art|sound|music/ } },
+                "presentation",
+                null
+              ]
+            }
+          ],
+          as: "t",
+          cond: { $ne: ["$$t", null] }
+        }
+      }
+    }
+  },
+  { $unwind: "$themes" },
+  {
+    $group: {
+      _id: "$themes",
+      totalReviews: { $sum: 1 },
+      avgHelpful: { $avg: "$helpful" },
+      avgFunny: { $avg: "$funny" },
+      recommendedCount: {
+        $sum: {
+          $cond: [{ $eq: ["$recommendation", "recommended"] }, 1, 0]
+        }
+      }
+    }
+  },
+  {
+    $addFields: {
+      recommendRate: {
+        $round: [
+          { $multiply: [{ $divide: ["$recommendedCount", "$totalReviews"] }, 100] },
+          2
+        ]
+      }
+    }
+  },
+  { $sort: { totalReviews: -1 } }
+])
+
+Zadání: Rozdělit recenze podle hlavních témat a porovnat jejich zastoupení.
+Popis: Dotaz vytváří pro každou recenzi pole témat na základě klíčových slov a poté tato témata agreguje. Výsledkem je přehled, zda hráči nejčastěji řeší příběh, technické problémy, multiplayer nebo audiovizuální stránku hry.
+
+27) Dlouhé pozitivní vs. dlouhé negativní recenze
+db.reviews.aggregate([
+  {
+    $set: {
+      reviewLength: { $strLenCP: "$review" }
+    }
+  },
+  { $match: { reviewLength: { $gte: 300 } } },
+  {
+    $group: {
+      _id: "$recommendation",
+      totalReviews: { $sum: 1 },
+      avgHelpful: { $avg: "$helpful" },
+      avgFunny: { $avg: "$funny" },
+      avgHours: { $avg: "$hours_played" },
+      avgLength: { $avg: "$reviewLength" }
+    }
+  },
+  { $sort: { avgHelpful: -1 } }
+])
+
+Zadání: Porovnat dlouhé doporučující a nedoporučující recenze.
+Popis: Dotaz vybírá pouze delší recenze a následně je rozděluje podle toho, zda hru doporučují. Sleduje, která skupina je užitečnější, humornější a od jak zkušených hráčů pochází.
+
+28) Shoda mezi popisem hry a tématy v recenzích
+db.games.aggregate([
+  {
+    $match: {
+      $expr: {
+        $regexMatch: {
+          input: {
+            $toLower: {
+              $concat: ["$short_description", " ", "$long_description"]
+            }
+          },
+          regex: /multiplayer|online|coop|co-op/
+        }
+      }
+    }
+  },
+  {
+    $lookup: {
+      from: "reviews",
+      let: { g: "$game_name_norm" },
+      pipeline: [
+        {
+          $match: {
+            $expr: { $eq: ["$game_name_norm", "$$g"] }
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            totalReviews: { $sum: 1 },
+            onlineMentions: {
+              $sum: {
+                $cond: [
+                  {
+                    $regexMatch: {
+                      input: { $toLower: "$review" },
+                      regex: /server|online|multiplayer|coop|co-op|matchmaking/
+                    }
+                  },
+                  1,
+                  0
+                ]
+              }
+            },
+            recommendedCount: {
+              $sum: {
+                $cond: [{ $eq: ["$recommendation", "recommended"] }, 1, 0]
+              }
+            }
+          }
+        }
+      ],
+      as: "reviewStats"
+    }
+  },
+  { $unwind: "$reviewStats" },
+  {
+    $project: {
+      _id: 0,
+      game_name: 1,
+      totalReviews: "$reviewStats.totalReviews",
+      onlineMentionRate: {
+        $round: [
+          {
+            $multiply: [
+              {
+                $divide: [
+                  "$reviewStats.onlineMentions",
+                  { $max: ["$reviewStats.totalReviews", 1] }
+                ]
+              },
+              100
+            ]
+          },
+          2
+        ]
+      },
+      recommendRate: {
+        $round: [
+          {
+            $multiply: [
+              {
+                $divide: [
+                  "$reviewStats.recommendedCount",
+                  { $max: ["$reviewStats.totalReviews", 1] }
+                ]
+              },
+              100
+            ]
+          },
+          2
+        ]
+      }
+    }
+  },
+  { $sort: { onlineMentionRate: -1 } },
+  { $limit: 10 }
+])
+
+Zadání: Ověřit, zda se vlastnosti zdůrazněné v popisu hry skutečně odrážejí i v recenzích hráčů.
+Popis: Dotaz vybírá hry, jejichž popis obsahuje multiplayerové prvky, a následně analyzuje recenze těchto her. Sleduje, jak často se multiplayer skutečně objevuje v recenzích a jaká je zároveň míra doporučení. Jde o propojení marketingového popisu a skutečné zkušenosti uživatelů.
+
+29) Čtení ze secondaryPreferred při replikaci a výpadku uzlu
+
+db.getMongo().setReadPref("secondaryPreferred");
+
+db.reviews.aggregate([
+  {
+    $group: {
+      _id: {
+        review_year: "$review_year",
+        recommendation: "$recommendation"
+      },
+      reviewCount: { $sum: 1 },
+      avgHelpful: { $avg: "$helpful" },
+      avgHours: { $avg: "$hours_played" }
+    }
+  },
+  {
+    $match: {
+      "_id.review_year": { $ne: null }
+    }
+  },
+  { $sort: { "_id.review_year": 1, reviewCount: -1 } }
+]);
+
+db.getMongo().setReadPref("primary");
+
+Zadání: Ověřit, že analytický dotaz může být obsloužen i při čtení se strategií secondaryPreferred, tedy i v situaci, kdy část čtení směřuje na sekundární uzly replikační sady.
+Popis: Dotaz nejprve nastaví preferenci čtení na secondaryPreferred a následně provede agregační pipeline nad kolekcí reviews. Pipeline vrací počty recenzí, průměrnou užitečnost a průměrný počet odehraných hodin podle roku a typu doporučení. Tento scénář je vhodný i pro demonstraci chování při výpadku sekundárního uzlu: pokud je alespoň jeden sekundární uzel dostupný, čtení může pokračovat bez nutnosti využívat pouze primární uzel. Dotaz tak ukazuje vztah mezi replikací, dostupností a strategií čtení.
+
+30) Uživatelé věrní jednomu žánru
+db.reviews.aggregate([
+  {
+    $lookup: {
+      from: "ranking",
+      localField: "game_name_norm",
+      foreignField: "game_name_norm",
+      as: "rankInfo"
+    }
+  },
+  { $unwind: "$rankInfo" },
+  {
+    $group: {
+      _id: {
+        username: "$username",
+        genre: "$rankInfo.genre"
+      },
+      distinctGames: { $addToSet: "$game_name_norm" },
+      totalReviews: { $sum: 1 },
+      recommendedCount: {
+        $sum: {
+          $cond: [{ $eq: ["$recommendation", "recommended"] }, 1, 0]
+        }
+      },
+      avgHours: { $avg: "$hours_played" }
+    }
+  },
+  {
+    $addFields: {
+      gamesCount: { $size: "$distinctGames" },
+      recommendRate: {
+        $round: [
+          { $multiply: [{ $divide: ["$recommendedCount", "$totalReviews"] }, 100] },
+          2
+        ]
+      }
+    }
+  },
+  { $match: { gamesCount: { $gte: 3 } } },
+  { $sort: { gamesCount: -1, avgHours: -1 } }
+])
+
+Zadání: Identifikovat uživatele, kteří se soustředí na více her v rámci jednoho žánru.
+Popis: Dotaz propojuje recenze se žánrovými informacemi a následně agreguje data podle uživatele a žánru. Sleduje, kolik různých her daného žánru uživatel komentoval, jaká je jeho míra doporučení a jak dlouho tyto hry hrál. Výsledkem je přehled hráčské žánrové specializace.
