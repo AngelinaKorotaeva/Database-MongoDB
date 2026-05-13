@@ -1,4 +1,20 @@
-Spuštění projektu
+## Cíl projektu
+
+Cílem projektu je vytvořit plně automatizované distribuované prostředí MongoDB pomocí Docker Compose.
+
+Projekt demonstruje:
+
+- konfiguraci shardovaného MongoDB clusteru,
+- replikační sady,
+- automatickou inicializaci databáze,
+- zabezpečení pomocí autentizace a keyfile,
+- import dat,
+- orchestrace kontejnerů pomocí Docker Compose,
+- práci s Mongo Express webovým rozhraním.
+
+Řešení je navrženo tak, aby bylo možné celý cluster spustit automaticky jedním příkazem bez manuální konfigurace.
+
+## Spuštění projektu
 
 Projekt je možné spustit jak na Windows, tak na Linuxu.
 Řešení je plně automatizované pomocí Docker Compose a inicializačních skriptů.
